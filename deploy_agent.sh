@@ -18,7 +18,7 @@ usage() {
   echo "  ./deploy_agent.sh archive [project_name]"
   echo "  ./deploy_agent.sh help"
   echo "  ./deploy_agent.sh"
-  echo ""Some required files are missing
+  echo ""
   echo "Examples:"
   echo "  ./deploy_agent.sh deploy classA"
   echo "  ./deploy_agent.sh run classA"
@@ -42,7 +42,6 @@ check_tools() {
 
 make_project_dir() {
   local project_name="$1"
-  local project_dir="$SCRIPT_DIR/${PROJECT_PREFIX}${project_name}"
 
   if [[ -z "$project_name" ]]; then
     read -p "Enter a project name (for example: classA): " project_name
@@ -52,7 +51,7 @@ make_project_dir() {
     fail "Project name cannot be empty."
   fi
 
-  echo "$project_dir"
+  echo "${SCRIPT_DIR}/${PROJECT_PREFIX}${project_name}"
 }
 
 handle_interrupt() {
@@ -197,6 +196,7 @@ deploy_project() {
   check_tools
 
   project_dir="$(make_project_dir "$project_name")"
+  echo "The project folder will be: ${project_dir##*/}"
 
   if [[ -e "$project_dir" ]]; then
     read -p "The project already exists. Do you want to overwrite it? [y/N]: " answer
