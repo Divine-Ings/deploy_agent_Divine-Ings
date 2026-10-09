@@ -5,30 +5,33 @@ import sys
 from datetime import datetime
 
 CONFIG_PATH = "Helpers/config.json"
-ASSETS_PATH = "Helpers/assets.csv"
-REPORTS_DIR = "reports"
-ATTENDANCE_LOG_PATH = os.path.join(REPORTS_DIR, "attendance.log")
-ABSENT_LOG_PATH = os.path.join(REPORTS_DIR, "absent.log")
+ROSTER_PATH = "Helpers/assets.csv"
+REPORTS_DIRECTORY = "reports"
+ATTENDANCE_LOG_PATH = os.path.join(REPORTS_DIRECTORY, "attendance.log")
+ABSENT_LOG_PATH = os.path.join(REPORTS_DIRECTORY, "absent.log")
 
-NAME_COL = "Names"
-EMAIL_COL = "Email"
-ATTEND_COL = "Attendance Count"
-ABSENT_COL = "Absence Count"
+STUDENT_NAME_COLUMN = "Names"
+EMAIL_COLUMN = "Email"
+ATTENDANCE_COUNT_COLUMN = "Attendance Count"
+ABSENCE_COUNT_COLUMN = "Absence Count"
 
 
-def load_config(path):
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Config file not found: {path}")
-    with open(path, "r", encoding="utf-8") as f:
+def load_config(config_path):
+    """Load and validate the app configuration."""
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+
+    with open(config_path, "r", encoding="utf-8") as config_file:
         try:
-            config = json.load(f)
+            config = json.load(config_file)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"Config file is not valid JSON: {exc}")
+            raise ValueError(f"Config file is not valid JSON: {exc}") from exc
 
-    required_top = ["thresholds", "run_mode", "total_sessions"]
-    for key in required_top:
+    required_top_level_keys = ["thresholds", "run_mode", "total_sessions"]
+    for key in required_top_level_keys:
         if key not in config:
             raise ValueError(f"Config is missing required key: '{key}'")
+
     for key in ["warning", "failure"]:
         if key not in config["thresholds"]:
             raise ValueError(f"Config['thresholds'] is missing key: '{key}'")
@@ -39,99 +42,103 @@ def load_config(path):
     return config
 
 
-def load_roster(path):
-    """Read the student roster. Returns (fieldnames, rows) where rows
-    are dicts with Attendance Count / Absence Count already as ints."""
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Roster file not found: {path}")
+def load_roster(roster_path):
+    """Read the student roster and return column names with parsed counts."""
+    if not os.path.exists(roster_path):
+        raise FileNotFoundError(f"Roster file not found: {roster_path}")
 
-    with open(path, mode="r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
+    with open(roster_path, mode="r", encoding="utf-8", newline="") as roster_file:
+        reader = csv.DictReader(roster_file)
         fieldnames = reader.fieldnames
         rows = list(reader)
 
     if not fieldnames or not rows:
-        raise ValueError(f"Roster file is empty: {path}")
+        raise ValueError(f"Roster file is empty: {roster_path}")
 
-    required_cols = [NAME_COL, EMAIL_COL, ATTEND_COL, ABSENT_COL]
-    missing = [c for c in required_cols if c not in fieldnames]
-    if missing:
-        raise ValueError(f"Roster is missing required column(s): {missing}")
+    required_columns = [
+        STUDENT_NAME_COLUMN,
+        EMAIL_COLUMN,
+        ATTENDANCE_COUNT_COLUMN,
+        ABSENCE_COUNT_COLUMN,
+    ]
+    missing_columns = [column for column in required_columns if column not in fieldnames]
+    if missing_columns:
+        raise ValueError(f"Roster is missing required column(s): {missing_columns}")
 
-    for row_num, row in enumerate(rows, start=2):
+    for row_number, row in enumerate(rows, start=2):
         try:
-            row[ATTEND_COL] = int(row[ATTEND_COL])
-            row[ABSENT_COL] = int(row[ABSENT_COL])
-        except ValueError:
+            row[ATTENDANCE_COUNT_COLUMN] = int(row[ATTENDANCE_COUNT_COLUMN])
+            row[ABSENCE_COUNT_COLUMN] = int(row[ABSENCE_COUNT_COLUMN])
+        except ValueError as exc:
             raise ValueError(
-                f"Roster row {row_num} has a non-numeric attendance/"
+                f"Roster row {row_number} has a non-numeric attendance/"
                 f"absence count: {row}"
-            )
+            ) from exc
 
     return fieldnames, rows
 
 
-def save_roster(path, fieldnames, rows):
-    """Persist updated Attendance/Absence counts back to assets.csv."""
-    with open(path, mode="w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+def save_roster(roster_path, fieldnames, rows):
+    """Save the updated roster back to the CSV file."""
+    with open(roster_path, mode="w", encoding="utf-8", newline="") as roster_file:
+        writer = csv.DictWriter(roster_file, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
 
-def classify(pct, thresholds):
-    """Return (level, label) - level is 'URGENT', 'WARNING', or None."""
-    if pct < thresholds["failure"]:
+def classify_attendance(attendance_percentage, thresholds):
+    """Return the alert level and message, if any, based on attendance percentage."""
+    if attendance_percentage < thresholds["failure"]:
         return "URGENT", "below the failure threshold - will fail this class"
-    if pct < thresholds["warning"]:
+    if attendance_percentage < thresholds["warning"]:
         return "WARNING", "below the warning threshold - please be careful"
     return None, ""
 
 
-def prompt_present(name, email):
-    """Ask the instructor to mark one student. Loops until valid input."""
+def prompt_for_presence(student_name, email_address):
+    """Ask for a student's attendance status until a valid answer is entered."""
     while True:
-        raw = input(
-            f"Mark {name} <{email}> - [P]resent or [A]bsent? "
+        raw_answer = input(
+            f"Mark {student_name} <{email_address}> - [P]resent or [A]bsent? "
         ).strip().lower()
-        if raw in ("p", "present", "y", "yes"):
+
+        if raw_answer in ("p", "present", "y", "yes"):
             return True
-        if raw in ("a", "absent", "n", "no"):
+        if raw_answer in ("a", "absent", "n", "no"):
             return False
+
         print("  Please enter 'P' for present or 'A' for absent.")
 
 
-def mark_attendance_session(rows, total_sessions, thresholds, run_mode):
+def mark_attendance_session(student_rows, total_sessions, thresholds, run_mode):
     """
-    Interactively mark every student in `rows` present/absent for
-    today's session, updating their running counts in place.
+    Prompt for each student in the current session and update their running totals.
 
-    Returns (attendance_lines, absent_lines, marked_count, stopped_early)
+    Returns a tuple of: (attendance_logs, absent_logs, marked_students, stopped_early)
     where stopped_early is one of None, "interrupted", or "input_ran_out".
-    If marking is cut short (Ctrl+C or stdin exhausted), whatever was
-    completed for students already marked is still returned intact -
-    the roster and logs stay consistent with each other either way.
     """
-    attendance_lines = []
-    absent_lines = []
-    marked_count = 0
+    attendance_logs = []
+    absent_logs = []
+    marked_students = 0
     stopped_early = None
     today = datetime.now().strftime("%Y-%m-%d")
 
-    print(f"\nToday's session: {len(rows)} students, total_sessions={total_sessions}\n")
+    print(f"\nToday's session: {len(student_rows)} students, total_sessions={total_sessions}\n")
 
-    for row in rows:
-        name, email = row[NAME_COL], row[EMAIL_COL]
-        prior_total = row[ATTEND_COL] + row[ABSENT_COL]
-        expected_prior = total_sessions - 1
-        if prior_total != expected_prior:
+    for row in student_rows:
+        student_name = row[STUDENT_NAME_COLUMN]
+        email_address = row[EMAIL_COLUMN]
+        prior_session_total = row[ATTENDANCE_COUNT_COLUMN] + row[ABSENCE_COUNT_COLUMN]
+        expected_previous_sessions = total_sessions - 1
+
+        if prior_session_total != expected_previous_sessions:
             print(
-                f"  (note: {name} has {prior_total} prior sessions on "
-                f"record, expected {expected_prior} - proceeding anyway)"
+                f"  (note: {student_name} has {prior_session_total} prior sessions on "
+                f"record, expected {expected_previous_sessions} - proceeding anyway)"
             )
 
         try:
-            present = prompt_present(name, email)
+            is_present = prompt_for_presence(student_name, email_address)
         except KeyboardInterrupt:
             stopped_early = "interrupted"
             break
@@ -141,75 +148,77 @@ def mark_attendance_session(rows, total_sessions, thresholds, run_mode):
 
         timestamp = datetime.now()
 
-        if present:
-            row[ATTEND_COL] += 1
+        if is_present:
+            row[ATTENDANCE_COUNT_COLUMN] += 1
             status = "PRESENT"
         else:
-            row[ABSENT_COL] += 1
+            row[ABSENCE_COUNT_COLUMN] += 1
             status = "ABSENT"
 
-        attended = row[ATTEND_COL]
-        pct = (attended / total_sessions) * 100
-        level, label = classify(pct, thresholds)
+        attended_sessions = row[ATTENDANCE_COUNT_COLUMN]
+        attendance_percentage = (attended_sessions / total_sessions) * 100
+        alert_level, alert_message = classify_attendance(attendance_percentage, thresholds)
 
-        suffix = f" | {level}: {label}" if level else ""
-        line = (
-            f"[{timestamp}] {name} <{email}>: {status} - "
-            f"attended {attended}/{total_sessions} = {pct:.1f}%{suffix}"
+        alert_suffix = f" | {alert_level}: {alert_message}" if alert_level else ""
+        log_line = (
+            f"[{timestamp}] {student_name} <{email_address}>: {status} - "
+            f"attended {attended_sessions}/{total_sessions} = {attendance_percentage:.1f}%{alert_suffix}"
         )
-        attendance_lines.append(line)
+        attendance_logs.append(log_line)
 
-        if level:
-            print(f"  -> {pct:.1f}% attendance | {level}: {label}")
+        if alert_level:
+            print(f"  -> {attendance_percentage:.1f}% attendance | {alert_level}: {alert_message}")
         else:
-            print(f"  -> {pct:.1f}% attendance | on track")
+            print(f"  -> {attendance_percentage:.1f}% attendance | on track")
 
-        if not present:
-            absent_lines.append(
-                f"[{today}] {name} <{email}> - absent "
-                f"(now {pct:.1f}% attendance){suffix}"
+        if not is_present:
+            absent_logs.append(
+                f"[{today}] {student_name} <{email_address}> - absent "
+                f"(now {attendance_percentage:.1f}% attendance){alert_suffix}"
             )
-            if run_mode == "live" and level:
-                print(f"  Logged alert for {name}")
+            if run_mode == "live" and alert_level:
+                print(f"  Logged alert for {student_name}")
 
-        marked_count += 1
+        marked_students += 1
 
-    return attendance_lines, absent_lines, marked_count, stopped_early
+    return attendance_logs, absent_logs, marked_students, stopped_early
 
 
-def append_log(path, header, lines):
+def append_log(log_path, header, lines):
+    """Append log entries to a report file if there is anything to log."""
     if not lines:
         return
-    os.makedirs(REPORTS_DIR, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(header + "\n")
+
+    os.makedirs(REPORTS_DIRECTORY, exist_ok=True)
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        log_file.write(header + "\n")
         for line in lines:
-            f.write(line + "\n")
+            log_file.write(line + "\n")
 
 
 def run_attendance_check():
     config = load_config(CONFIG_PATH)
-    fieldnames, rows = load_roster(ASSETS_PATH)
+    fieldnames, rows = load_roster(ROSTER_PATH)
 
     total_sessions = config["total_sessions"]
     thresholds = config["thresholds"]
     run_mode = config.get("run_mode", "dry_run")
 
-    attendance_lines, absent_lines, marked_count, stopped_early = (
-        mark_attendance_session(rows, total_sessions, thresholds, run_mode)
+    attendance_logs, absent_logs, marked_students, stopped_early = mark_attendance_session(
+        rows, total_sessions, thresholds, run_mode
     )
 
     session_header = (
         f"=== Session recorded {datetime.now()} | "
         f"total_sessions={total_sessions} | mode={run_mode} ==="
     )
-    append_log(ATTENDANCE_LOG_PATH, session_header, attendance_lines)
-    append_log(ABSENT_LOG_PATH, session_header, absent_lines)
-    save_roster(ASSETS_PATH, fieldnames, rows)
+    append_log(ATTENDANCE_LOG_PATH, session_header, attendance_logs)
+    append_log(ABSENT_LOG_PATH, session_header, absent_logs)
+    save_roster(ROSTER_PATH, fieldnames, rows)
 
     if stopped_early == "interrupted":
         print(
-            f"\nInterrupted - marked {marked_count}/{len(rows)} students "
+            f"\nInterrupted - marked {marked_students}/{len(rows)} students "
             "before Ctrl+C. Their results were saved to the roster and "
             "logs; the rest of the roster is unchanged.",
             file=sys.stderr,
@@ -218,7 +227,7 @@ def run_attendance_check():
 
     if stopped_early == "input_ran_out":
         print(
-            f"\nInput ended early - marked {marked_count}/{len(rows)} "
+            f"\nInput ended early - marked {marked_students}/{len(rows)} "
             "students before running out of input. Their results were "
             "saved; the rest of the roster is unchanged.",
             file=sys.stderr,
@@ -226,8 +235,8 @@ def run_attendance_check():
         sys.exit(1)
 
     print(
-        f"\nDone. Marked {marked_count} students, "
-        f"{len(absent_lines)} absent. "
+        f"\nDone. Marked {marked_students} students, "
+        f"{len(absent_logs)} absent. "
         f"Logs: {ATTENDANCE_LOG_PATH}, {ABSENT_LOG_PATH}"
     )
 
